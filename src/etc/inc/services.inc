@@ -772,48 +772,27 @@ EOPP;
 		$dhcpdconf .= "subnet {$subnet} netmask {$subnetmask} {\n";
 
 		// Setup pool options
+		$custom_dhcpdconf="";
 		foreach ($all_pools as $all_pools_idx => $poolconf) {
-			if (!(ip_in_subnet($poolconf['range']['from'], "{$subnet}/{$ifcfgsn}") && ip_in_subnet($poolconf['range']['to'], "{$subnet}/{$ifcfgsn}"))) {
-				// If the user has changed the subnet from the interfaces page and applied,
-				// but has not updated the DHCP range, then the range to/from of the pool can be outside the subnet.
-				// This can also happen when implementing the batch of changes when the setup wizard reloads the new settings.
-				$error_msg = sprintf(gettext('Invalid DHCP pool %1$s - %2$s for %3$s subnet %4$s/%5$s detected. Please correct the settings in Services, DHCP Server'), $poolconf['range']['from'], $poolconf['range']['to'], convert_real_interface_to_friendly_descr($dhcpif), $subnet, $ifcfgsn);
-				$do_file_notice = true;
-				$conf_ipv4_address = $ifcfg['ipaddr'];
-				$conf_ipv4_subnetmask = $ifcfg['subnet'];
-				if (is_ipaddrv4($conf_ipv4_address) && is_subnet("{$conf_ipv4_address}/{$conf_ipv4_subnetmask}")) {
-					$conf_subnet_base = gen_subnet($conf_ipv4_address, $conf_ipv4_subnetmask);
-					if (ip_in_subnet($poolconf['range']['from'], "{$conf_subnet_base}/{$conf_ipv4_subnetmask}") &&
-					    ip_in_subnet($poolconf['range']['to'], "{$conf_subnet_base}/{$conf_ipv4_subnetmask}")) {
-						// Even though the running interface subnet does not match the pool range,
-						// the interface subnet in the config file contains the pool range.
-						// We are somewhere part-way through a settings reload, e.g. after running the setup wizard.
-						// services_dhcpdv4_configure will be called again later when the new interface settings from
-						// the config are applied and at that time everything will match up.
-						// Ignore this pool on this interface for now and just log the error to the system log.
-						log_error($error_msg);
-						$do_file_notice = false;
-					}
-				}
-				if ($do_file_notice) {
-					file_notice("DHCP", $error_msg);
-				}
+			$pool_dhcpdconf="";
+			if ($poolconf['disablepool'])
 				continue;
-			}
-			$dhcpdconf .= "	pool {\n";
+			if (is_ipaddr($poolconf['custom_subnet']))
+				$custom_dhcpdconf.= "subnet {$poolconf['custom_subnet']} netmask {$poolconf['custom_subnet_mask']} {\n";
+				$pool_dhcpdconf .= "	pool {\n";
 			/* is failover dns setup? */
 			if (is_array($poolconf['dnsserver']) && $poolconf['dnsserver'][0] <> "") {
 				$dhcpdconf .= "		option domain-name-servers {$poolconf['dnsserver'][0]}";
 				if ($poolconf['dnsserver'][1] <> "") {
-					$dhcpdconf .= ",{$poolconf['dnsserver'][1]}";
+					$pool_dhcpdconf .= ",{$poolconf['dnsserver'][1]}";
 				}
 				if ($poolconf['dnsserver'][2] <> "") {
-					$dhcpdconf .= ",{$poolconf['dnsserver'][2]}";
+					$pool_dhcpdconf .= ",{$poolconf['dnsserver'][2]}";
 				}
 				if ($poolconf['dnsserver'][3] <> "") {
-					$dhcpdconf .= ",{$poolconf['dnsserver'][3]}";
+					$pool_dhcpdconf .= ",{$poolconf['dnsserver'][3]}";
 				}
-				$dhcpdconf .= ";\n";
+				$pool_dhcpdconf .= ";\n";
 			}
 
 			/* allow/deny MACs */
@@ -822,7 +801,7 @@ EOPP;
 				if (empty($mac)) {
 					continue;
 				}
-				$dhcpdconf .= "		allow members of \"" . str_replace(':', '', $mac) . "\";\n";
+				$pool_dhcpdconf .= "		allow members of \"" . str_replace(':', '', $mac) . "\";\n";
 			}
 			$deny_action = "deny";
 			if (isset($poolconf['nonak']) && empty($poolconf['failover_peerip'])) {
@@ -833,23 +812,23 @@ EOPP;
 				if (empty($mac)) {
 					continue;
 				}
-				$dhcpdconf .= "		$deny_action members of \"" . str_replace(':', '', $mac) . "\";\n";
+				$pool_dhcpdconf .= "		$deny_action members of \"" . str_replace(':', '', $mac) . "\";\n";
 			}
 
 			if ($poolconf['failover_peerip'] <> "") {
-				$dhcpdconf .= "		$deny_action dynamic bootp clients;\n";
+				$pool_dhcpdconf .= "		$deny_action dynamic bootp clients;\n";
 			}
 
 			if (isset($poolconf['denyunknown'])) {
-				$dhcpdconf .= "		$deny_action unknown-clients;\n";
+				$pool_dhcpdconf .= "		$deny_action unknown-clients;\n";
 			}
 
 			if ($poolconf['gateway'] && $poolconf['gateway'] != "none" && ($poolconf['gateway'] != $dhcpifconf['gateway'])) {
-				$dhcpdconf .= "		option routers {$poolconf['gateway']};\n";
+				$pool_dhcpdconf .= "		option routers {$poolconf['gateway']};\n";
 			}
 
 			if ($dhcpifconf['failover_peerip'] <> "") {
-				$dhcpdconf .= "		failover peer \"dhcp_{$dhcpif}\";\n";
+				$pool_dhcpdconf .= "		failover peer \"dhcp_{$dhcpif}\";\n";
 			}
 
 			$pdnscfg = "";
@@ -869,46 +848,46 @@ EOPP;
 				$pdnscfg .= "		ddns-update-style interim;\n";
 			}
 
-			$dhcpdconf .= "{$pdnscfg}";
+			$pool_dhcpdconf .= "{$pdnscfg}";
 
 			// default-lease-time
 			if ($poolconf['defaultleasetime'] && ($poolconf['defaultleasetime'] != $dhcpifconf['defaultleasetime'])) {
-				$dhcpdconf .= "		default-lease-time {$poolconf['defaultleasetime']};\n";
+				$pool_dhcpdconf .= "		default-lease-time {$poolconf['defaultleasetime']};\n";
 			}
 
 			// max-lease-time
 			if ($poolconf['maxleasetime'] && ($poolconf['maxleasetime'] != $dhcpifconf['maxleasetime'])) {
-				$dhcpdconf .= "		max-lease-time {$poolconf['maxleasetime']};\n";
+				$pool_dhcpdconf .= "		max-lease-time {$poolconf['maxleasetime']};\n";
 			}
 
 			// ignore bootp
 			if (isset($poolconf['ignorebootp'])) {
-				$dhcpdconf .= "		ignore bootp;\n";
+				$pool_dhcpdconf .= "		ignore bootp;\n";
 			}
 
 			// ignore-client-uids
 			if (isset($poolconf['ignoreclientuids'])) {
-				$dhcpdconf .= "		ignore-client-uids true;\n";
+				$pool_dhcpdconf .= "		ignore-client-uids true;\n";
 			}
 
 			// netbios-name*
 			if (is_array($poolconf['winsserver']) && $poolconf['winsserver'][0] && ($poolconf['winsserver'][0] != $dhcpifconf['winsserver'][0])) {
-				$dhcpdconf .= "		option netbios-name-servers " . join(",", $poolconf['winsserver']) . ";\n";
-				$dhcpdconf .= "		option netbios-node-type 8;\n";
+				$pool_dhcpdconf .= "		option netbios-name-servers " . join(",", $poolconf['winsserver']) . ";\n";
+				$pool_dhcpdconf .= "		option netbios-node-type 8;\n";
 			}
 
 			// ntp-servers
 			if (is_array($poolconf['ntpserver']) && $poolconf['ntpserver'][0] && ($poolconf['ntpserver'][0] != $dhcpifconf['ntpserver'][0])) {
-				$dhcpdconf .= "		option ntp-servers " . join(",", $poolconf['ntpserver']) . ";\n";
+				$pool_dhcpdconf .= "		option ntp-servers " . join(",", $poolconf['ntpserver']) . ";\n";
 			}
 
 			// tftp-server-name
 			if (!empty($poolconf['tftp']) && ($poolconf['tftp'] != $dhcpifconf['tftp'])) {
-				$dhcpdconf .= "		option tftp-server-name \"{$poolconf['tftp']}\";\n";
+				$pool_dhcpdconf .= "		option tftp-server-name \"{$poolconf['tftp']}\";\n";
 			}
 
 			// Handle pool-specific options
-			$dhcpdconf .= "\n";
+			$pool_dhcpdconf .= "\n";
 			// Ignore the first pool, which is the "overall" pool when $all_pools_idx is 0 - those are put outside the pool block later
 			if ($poolconf['numberoptions']['item'] && ($all_pools_idx > 0)) {
 				// Use the "real" pool index from the config, excluding the "overall" pool, and based from 0.
@@ -917,22 +896,22 @@ EOPP;
 				foreach ($poolconf['numberoptions']['item'] as $itemidx => $item) {
 					$item_value = base64_decode($item['value']);
 					if (empty($item['type']) || $item['type'] == "text") {
-						$dhcpdconf .= "		option custom-{$dhcpif}-{$poolidx}-{$itemidx} \"{$item_value}\";\n";
+						$pool_dhcpdconf .= "		option custom-{$dhcpif}-{$poolidx}-{$itemidx} \"{$item_value}\";\n";
 					} else {
-						$dhcpdconf .= "		option custom-{$dhcpif}-{$poolidx}-{$itemidx} {$item_value};\n";
+						$pool_dhcpdconf .= "		option custom-{$dhcpif}-{$poolidx}-{$itemidx} {$item_value};\n";
 					}
 				}
 			}
 
 			// ldap-server
 			if (!empty($poolconf['ldap']) && ($poolconf['ldap'] != $dhcpifconf['ldap'])) {
-				$dhcpdconf .= "		option ldap-server \"{$poolconf['ldap']}\";\n";
+				$pool_dhcpdconf .= "		option ldap-server \"{$poolconf['ldap']}\";\n";
 			}
 
 			// net boot information
 			if (isset($poolconf['netboot'])) {
 				if (!empty($poolconf['nextserver']) && ($poolconf['nextserver'] != $dhcpifconf['nextserver'])) {
-					$dhcpdconf .= "		next-server {$poolconf['nextserver']};\n";
+					$pool_dhcpdconf .= "		next-server {$poolconf['nextserver']};\n";
 				}
 
 				if (!empty($poolconf['filename']) &&
@@ -964,26 +943,32 @@ EOPP;
 				}
 
 				if (!empty($filename) && !empty($filename32) && !empty($filename64)) {
-					$dhcpdconf .= "		if option arch = 00:06 {\n";
-					$dhcpdconf .= "			filename \"{$filename32}\";\n";
-					$dhcpdconf .= "		} else if option arch = 00:07 {\n";
-					$dhcpdconf .= "			filename \"{$filename64}\";\n";
-					$dhcpdconf .= "		} else if option arch = 00:09 {\n";
-					$dhcpdconf .= "			filename \"{$filename64}\";\n";
-					$dhcpdconf .= "		} else {\n";
-					$dhcpdconf .= "			filename \"{$filename}\";\n";
-					$dhcpdconf .= "		}\n\n";
+					$pool_dhcpdconf .= "		if option arch = 00:06 {\n";
+					$pool_dhcpdconf .= "			filename \"{$filename32}\";\n";
+					$pool_dhcpdconf .= "		} else if option arch = 00:07 {\n";
+					$pool_dhcpdconf .= "			filename \"{$filename64}\";\n";
+					$pool_dhcpdconf .= "		} else if option arch = 00:09 {\n";
+					$pool_dhcpdconf .= "			filename \"{$filename64}\";\n";
+					$pool_dhcpdconf .= "		} else {\n";
+					$pool_dhcpdconf .= "			filename \"{$filename}\";\n";
+					$pool_dhcpdconf .= "		}\n\n";
 				} elseif (!empty($filename)) {
-					$dhcpdconf .= "		filename \"{$filename}\";\n";
+					$pool_dhcpdconf .= "		filename \"{$filename}\";\n";
 				}
 				unset($filename, $filename32, $filename64);
 
 				if (!empty($poolconf['rootpath']) && ($poolconf['rootpath'] != $dhcpifconf['rootpath'])) {
-					$dhcpdconf .= "		option root-path \"{$poolconf['rootpath']}\";\n";
+					$pool_dhcpdconf .= "		option root-path \"{$poolconf['rootpath']}\";\n";
 				}
 			}
-			$dhcpdconf .= "		range {$poolconf['range']['from']} {$poolconf['range']['to']};\n";
-			$dhcpdconf .= "	}\n\n";
+			
+			$pool_dhcpdconf .= "		range {$poolconf['range']['from']} {$poolconf['range']['to']};\n";
+			$pool_dhcpdconf .= "	}\n\n";
+
+			if (is_ipaddr($poolconf['custom_subnet']))
+				$custom_dhcpdconf.= $pool_dhcpdconf."\n}";
+			else
+				$dhcpdconf .= $pool_dhcpdconf;
 		}
 // End of settings inside pools
 
@@ -1174,6 +1159,7 @@ EOD;
 			}
 		}
 
+		$dhcpdconf .=$custom_dhcpdconf;
 		$dhcpdifs[] = get_real_interface($dhcpif);
 		if ($newzone['domain-name']) {
 			if ($need_ddns_updates) {

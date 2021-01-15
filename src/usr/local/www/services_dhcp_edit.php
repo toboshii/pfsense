@@ -178,26 +178,37 @@ if ($_POST['save']) {
 	}
 
 	/* make sure it's not within the dynamic subnet */
+	$range_match=0;
 	if ($_POST['ipaddr']) {
 		if (is_inrange_v4($_POST['ipaddr'], $config['dhcpd'][$if]['range']['from'], $config['dhcpd'][$if]['range']['to'])) {
-			$input_errors[] = sprintf(gettext("The IP address must not be within the DHCP range for this interface."));
+			$range_match++;
 		}
 
 		foreach ($a_pools as $pidx => $p) {
 			if (is_inrange_v4($_POST['ipaddr'], $p['range']['from'], $p['range']['to'])) {
-				$input_errors[] = gettext("The IP address must not be within the range configured on a DHCP pool for this interface.");
-				break;
+				$range_match++;
 			}
 		}
+
+		//check pool subnets
+		foreach ($a_pools as $pidx => $p) {
+			if (is_innet_v4($p['custom_subnet']."/".mask2cidr_v4($p['custom_subnet_mask']),$_POST['ipaddr'])) {
+				$range_match++;
+			}
+	 	}
 
 		$lansubnet_start = gen_subnetv4($ifcfgip, $ifcfgsn);
 		$lansubnet_end = gen_subnetv4_max($ifcfgip, $ifcfgsn);
 		if (!is_inrange_v4($_POST['ipaddr'], $lansubnet_start, $lansubnet_end)) {
-			$input_errors[] = sprintf(gettext("The IP address must lie in the %s subnet."), $ifcfgdescr);
+			$range_match++;
 		}
 
 		if ($_POST['ipaddr'] == $lansubnet_start) {
 			$input_errors[] = sprintf(gettext("The IP address cannot be the %s network address."), $ifcfgdescr);
+		}
+
+		if ($range_match == 0) {
+			$input_errors[] = sprintf(gettext("The IP address does not match any configured range or pool."),$ifcfgdescr);
 		}
 
 		if ($_POST['ipaddr'] == $lansubnet_end) {
