@@ -782,7 +782,7 @@ EOPP;
 				$pool_dhcpdconf .= "	pool {\n";
 			/* is failover dns setup? */
 			if (is_array($poolconf['dnsserver']) && $poolconf['dnsserver'][0] <> "") {
-				$dhcpdconf .= "		option domain-name-servers {$poolconf['dnsserver'][0]}";
+				$pool_dhcpdconf .= "		option domain-name-servers {$poolconf['dnsserver'][0]}";
 				if ($poolconf['dnsserver'][1] <> "") {
 					$pool_dhcpdconf .= ",{$poolconf['dnsserver'][1]}";
 				}
@@ -793,6 +793,8 @@ EOPP;
 					$pool_dhcpdconf .= ",{$poolconf['dnsserver'][3]}";
 				}
 				$pool_dhcpdconf .= ";\n";
+			} elseif ($all_pools_idx != 0) {
+				$pool_dhcpdconf .= "    $dnscfg\n";
 			}
 
 			/* allow/deny MACs */
